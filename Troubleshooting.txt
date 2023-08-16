@@ -1,0 +1,13 @@
+
+********************************************************
+md5 of file does not match data in flash
+Als je een error krijgt dat de MD5 hashes niet overeen komen, en als je niet meer kan uploaden, moet je het volgende doen:
+
+Maak een environment aan in anaconda.
+pip install esptools
+
+Dan om het flash wrtite protection te clearen doe je:
+esptool --chip esp32 --port com5 write_flash_status --bytes 2 --non-volatile 0
+Dan om het flash te clearen doe je dit:
+esptool --chip esp32 --port com5 erase_flash
+Dan ga je naar de arduino IDE, en dan werkt alles weer zoals normaal.

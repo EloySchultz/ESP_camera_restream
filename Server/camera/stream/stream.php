@@ -1,0 +1,395 @@
+<?php
+
+/*
+
+Description: mjpeg restreaming script with image overlay capability. 
+Author: Stephen Price / Webmad
+Version: 1.0.0
+Author URI: http://www.webmad.co.nz
+Usage: <img src="stream.php" />
+Notes: If you are keen to have image overlays clickable, use html elements overlaying the <img> element (ie: wrap <img> in a <div> with position:relative; and add an <a> element with display:block;position:absolute;bottom:0px;left:0px;width:100%;height:15px;background:transparent;z-index:2;)
+Requirements: php5+ compiled with --enable-shmop
+
+*/
+
+ini_set('display_errors',1);
+error_reporting(E_ALL);
+
+
+
+
+
+$cam1_disable = file_exists('test.txt');
+
+
+
+$debug=false;
+$watch_time_max = 300; //seconds
+$host = "";
+$port = "";
+$watch_time = $watch_time_max;
+$url = "";
+$datalimit = 120000;
+// These settings would read an mjpeg stream from http://192.168.1.1:80/videostream.cgi?user=admin&password=pass
+if (isset($_GET["host"]))
+$host = $_GET["host"];//"192.168.2.128";
+if (isset($_GET["port"]))
+$port = $_GET["port"];//"80";
+if (isset($_GET["url"]))
+$url = $_GET["url"]; //"/mjpeg/1";
+
+if (isset($_GET["t"]))
+{
+	if (is_numeric($_GET["t"]))
+	{
+		if ($_GET["t"]<$watch_time_max)
+		{
+			$watch_time = $_GET["t"];//"t=30";
+		}
+		
+	}
+}
+
+if ($cam1_disable)
+	exit;
+
+if (strlen($host)*strlen($port)*strlen($url)==0)
+{
+	echo "ERROR: host, url or port parameter was not given!";
+	exit;
+}
+
+$tmp = explode('.', $host);
+$mem_id = end($tmp)*2; //create memory id from the 
+
+// Image settings:
+$overlay = "bannerad.png";	//image that will be superimposed onto the stream
+$fallback = "webcam.jpg";	//image that will get updated every 20 frames or so for browsers that don't support mjpeg streams
+$boundary = "123456789000000000000987654321";	
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Stuff below here will break things if edited. Avert your eyes unless you know what you are doing
+// (or can make it look like you know what you are doing, and won't get naggy if you can't fix it.)
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//echo "starting";
+set_time_limit(5); 
+ignore_user_abort(true);
+ini_set('max_execution_time', $watch_time*1.2);
+
+$start = time();
+$in2 = imageCreateFromPNG($overlay);	
+
+$tmid = @shmop_open($mem_id, 'c', 0777, 1024);//0xff4
+if (false === $tmid) {
+    $tmid = shmop_open($mem_id, "w", 0777, 1024);
+}
+$tdmid = @shmop_open($mem_id+1, 'c', 0777, 202400);//0xff6
+if (false === $tdmid) {
+    $tdmid = shmop_open($mem_id+1, "w", 0777, 202400);
+}
+	
+	// shmop_delete($tmid);
+	// shmop_delete($tdmid);
+	// $tmid = @shmop_open($mem_id, 'c', 0777, 1024);//0xff4
+// if (false === $tmid) {
+    // $tmid = shmop_open($mem_id, "w", 0777, 1024);
+// }
+// $tdmid = @shmop_open($mem_id+1, 'c', 0777, 202400);//0xff6
+// if (false === $tdmid) {
+    // $tdmid = shmop_open($mem_id+1, "w", 0777, 202400);
+// }
+	
+	
+
+
+
+$data = unserialize(trim(shmop_read($tmid, 0, 1024)));
+
+
+header('Accept-Range: bytes');
+header('Connection: close');
+header('Content-Type: multipart/x-mixed-replace;boundary='.$boundary);
+header('Cache-Control: no-cache');
+
+
+if(!headers_sent()){
+		header('Accept-Range: bytes');
+		header('Connection: close');
+		header('Content-Type: multipart/x-mixed-replace;boundary='.$boundary);
+		header('Cache-Control: no-cache');
+		
+		
+		/*header("Cache-Control: no-cache");
+	header("Cache-Control: private");
+	header("Pragma: no-cache");
+	header("Content-type: multipart/x-mixed-replace; boundary=123456789000000000000987654321");*/
+	}
+
+if(!isset($data['updated'])||$data['updated']<(microtime(true)-5)){ //If there is no data in memory, or the data in memorty is outdated, then renew the data.
+	//echo "This thread starts with lead!";
+	fresh();
+}
+//echo "Starting re-stream";
+flush();
+$curframe = $data['frame'];
+flush();
+//iSSUE: if there is more than one restreaming client, how to decide which client actually takes over?
+while(($data['updated']>(microtime(true)-2)) && ((time()-$start)<$watch_time)){ //If the data in memory is relatively up to date (this is a carrier for connected clients that are not first)
+	if($curframe!=$data['frame']){
+		$curframe = $data['frame'];
+		$frames = unserialize(trim(shmop_read($tdmid, 0, 202400)));
+		$frames2 = array_keys($frames);
+		$key=array_pop($frames2);
+			
+	
+			//echo "\r\n Pushing frame from re-stream\r\n";
+			echo "--".$boundary."\r\nContent-Type: image/jpeg\r\nContent-Length: ".strlen($frames[$key])."\r\n\r\n".$frames[$key]."\r\n";
+			flush();
+	}
+	usleep(50000);
+	$data = unserialize(trim(shmop_read($tmid, 0, 1024)));
+}
+//echo"\r\n***Ending reastream***\r\n";
+//echo "Ending reastream since dataupload is ".$data['updated']." which is later than microtime".(microtime(true)-2);
+//flush();
+if((time()-$start)<$watch_time){ //If all else fails, check if you can read the stream directly. Note the -1 because of the < instead of <=. 
+	dprint("This thread will take the lead!");
+	flush();
+	fresh();
+}
+
+
+//this code will only run if slaves run out of watch_time. Note that fresh() ends in exit, so it will not execute this code for a master.
+$img = imagecreate(800, 600);	
+$backgroundColor = imagecolorallocate ($img, 10, 10, 40);
+imagestring($img,3,300,240,"Your stream time limit was reached",imagecolorallocate($img,255,255,255));
+imagestring($img,3,220,260,"Please reload this window to receive new video footage...",imagecolorallocate($img,255,255,255));
+ob_start();
+imagejpeg($img,NULL,60);
+//output($img);
+$imgstr = ob_get_contents();
+ob_end_clean();	
+echo "--".$boundary."\r\nContent-Type: image/jpeg\r\nContent-Length: ".strlen($imgstr)."\r\n\r\n".$imgstr;
+dprint("Printing final message as slave!");
+flush();
+
+
+
+//this code will never run because fresh ends in exit!
+// echo "Done Bye";
+flush();
+
+
+
+
+
+// shmop_close($tdmid);
+// shmop_close($tmid); //These functions are deprecated from PHP>8.0
+exit;
+
+
+
+
+
+function output($in){
+	global $in2,$start;
+	$string = date('r')."| ".strval(time()-$start);
+	imagecopy($in,$in2,0,0,0,0,800,600);
+	$font = 2;
+	$width = imagefontwidth($font) * strlen($string) ;
+	$height = imagefontheight($font)+10 ;
+	$x = imagesx($in) - $width ;
+	$y = imagesy($in) - $height;
+	$backgroundColor = imagecolorallocate ($in, 255, 255, 255);
+	$textColor = imagecolorallocate ($in, 255, 0,255);
+	imagestring ($in, $font, $x, $y,  $string, $textColor);
+	imagejpeg($in,NULL,60);
+}
+
+function fresh(){
+	global $data,$tmid,$tdmid,$start,$in2,$host,$port,$url,$boundary,$fallback,$update_rate, $datalimit, $watch_time;
+	$data = (array) null;
+	if(!headers_sent()){
+		header('Accept-Range: bytes');
+		header('Connection: close');
+		header('Content-Type: multipart/x-mixed-replace;boundary='.$boundary);
+		header('Cache-Control: no-cache');
+		
+		
+		/*header("Cache-Control: no-cache");
+	header("Cache-Control: private");
+	header("Pragma: no-cache");
+	header("Content-type: multipart/x-mixed-replace; boundary=123456789000000000000987654321");*/
+	}
+	
+	
+	$data['updated']=microtime(true);
+	$data['frame']=0;
+	$frames = array();
+	shmop_write($tmid, str_pad(serialize($data),1024,' '), 0);
+	// preparing http options:
+	$mjpeg_url = "http://".$host.":".$port.$url;
+	//"http://192.168.2.129:81/stream";
+	$opts = array(
+		'http'=>array(
+			'method'=>"GET",
+			'header'=>"Accept-language: en\r\n" .
+			"Cookie: foo=bar\r\n"
+		  )
+	);
+	$context = stream_context_create($opts);
+	//$fp = fopen($mjpeg_url, 'r', false, $context);
+
+	
+	
+	$fp = @fsockopen($host, $port, $errno, $errstr, 2); //connection timeout of 2 seconds...
+	if($fp){
+		$out = "GET $url HTTP/1.1\r\n";
+	    $out .= "Host: $host\r\n";
+	    $out .= "\r\n";
+	    fwrite($fp, $out);
+	    $buffer='';
+	    while (!feof($fp)) { 
+			//apache_reset_timeout();
+	        //$part= fgets($fp);
+			$part1 = stream_get_line($fp, $datalimit,"--".$boundary); //Read bytes from the stream until you see a boundary (or untill you have read 20000 bytes)
+			if($part1)
+			{
+			$buffer .= $part1; // Add read bytes to buffer
+	    	$part=$buffer;    //Entire buffer is now the part that we will consider
+			
+			//if (substr_count($part, "\xFF\xD8")>2) //$r.=fread($f, 8192);  //SLOW AS FUCK, Check if there is a full frame inside the part. This can be skipped because of stream_get_line
+			if (strlen($part1)<$datalimit) //If the length is 60000, then it probably did not read untill the boundary yet.
+			{
+			$a = strpos($part, "\xFF\xD8"); //These bytes indicate the start of the JPEG frame.
+			$b = strpos($part, "\xFF\xD9", $a); //These bytes indicate the end of the JPEG frame. 
+			$frame = substr($part, $a, $b+2-$a);	 //Cut out and store the string between a and b.  Note that we do +2 to include the end bytes in the final frame.
+			$img = @imagecreatefromstring($frame);  //Try to create image (aka verify that the data is JPEG)
+			if (!$img)
+			{
+			dprint("\r\n error: failed to make image ");
+			dprint($a);
+			dprint("-");
+			dprint($b);
+			dprint("-");
+			dprint(strlen($buffer));
+			dprint("-");
+			dprint(strlen($part1));
+			dprint("\r\n");
+			if ($a && $b)
+			{
+				//Both substrings were found, but string creation failed. Likely corrupt frame, so cutout data between 
+				dprint("Error: Corrupt frame removed from buffer!");
+				$buffer = substr($buffer,$b+2, strlen($buffer)-$b+2);
+			}
+			}
+			if($img){	
+				//dprint(strlen($buffer));
+				$buffer = substr($buffer,$b+2, strlen($buffer)-$b+2);	 //Remove the complete frame from the buffer			
+				//dprint(strlen($buffer));
+				//dprint("ok?");
+				ob_start();
+				output($img);	//,null,60
+				$imgstr = ob_get_contents();
+				ob_end_clean();	
+				$data['frame']++;							//Increment frame number
+				$data['updated']=microtime(true); 					//Update time data so that other clients know that they can update their frames.
+				while(count($frames)>2)
+				{
+					array_shift($frames);} //Remove old frames from frames variable. Note that it will store 2 frames max.
+				$frames[] = $imgstr;						//set/add new frame to frames variable
+				shmop_write($tdmid, str_pad(serialize($frames),102400,' '), 0); //Write frame data to memory for other clients
+				shmop_write($tmid, str_pad(serialize($data),1024,' '), 0);   //Write data (updated, framenumber) to memory.
+				//Echo the recorded image.
+				//echo memory_get_usage(true);
+				echo "--$boundary\r\nContent-Type: image/jpeg\r\nContent-Length: ".strlen($imgstr)."\r\n\r\n".$imgstr."\r\n";	//$frames[$data['frame']]
+				dprint("This is where your frame data would be");
+				dprint(strlen($buffer));
+				//if(($data['frame']/20)-(ceil($data['frame']/20))==0)file_put_contents($fallback,$imgstr);
+				if((time()-$start)>$watch_time-1){
+				 //echo "\r\n fresh is stopping due to time limit\r\n";
+					flush();
+					fclose($fp);
+					
+					$img = imagecreate(800, 600);	
+					$backgroundColor = imagecolorallocate ($img, 10, 10, 40);
+					imagestring($img,3,300,240,"Your stream time limit was reached",imagecolorallocate($img,255,255,255));
+					imagestring($img,3,220,260,"Please reload this window to receive new video footage...",imagecolorallocate($img,255,255,255));
+					ob_start();
+					imagejpeg($img,NULL,60);
+					//output($img);
+					$imgstr = ob_get_contents();
+					ob_end_clean();	
+					echo "--".$boundary."\r\nContent-Type: image/jpeg\r\nContent-Length: ".strlen($imgstr)."\r\n\r\n".$imgstr;
+					dprint("Printing final message as master!");
+					flush();
+					/*imagestring($img,3,300,240,"Your stream time limit was reached",imagecolorallocate($img,255,255,255));
+					imagestring($img,3,220,260,"Please reload this window to receive new video footage...",imagecolorallocate($img,255,255,255));
+
+					ob_start();
+					output($img);
+					$imgstr = ob_get_contents();
+					ob_end_clean();	
+					echo "--$boundary\r\nContent-Type: image/jpeg\r\nContent-Length: ".strlen($imgstr)."\r\n\r\n".$imgstr;
+					flush();
+					flush();*/
+					//echo "Ended normally";
+					exit;
+				}
+				flush();
+			}
+			else 
+			{
+			
+			}
+			}
+			else
+			{
+			echo "\r\n error: Part is likely incomplete";
+			}
+			//flush();
+		}
+		else
+		{
+			echo "\r\n Error: stream_get_line failed!";
+			
+$errorcode = socket_last_error();
+    $errormsg = socket_strerror($errorcode);
+	echo $errormsg;
+//var_dump($meta);
+echo "\r\n";
+			
+		}
+	        
+	    }
+		
+		
+		fclose($fp);
+		exit();
+	}
+	else{			
+		$img = imageCreateFromJPEG($fallback);
+		
+		imagestring($img,3,25,180,"Could not connect to the camera source",imagecolorallocate($img,255,255,255));
+		imagestring($img,3,65,195,"Please try again later...",imagecolorallocate($img,255,255,255));
+		
+		ob_start();
+		output($img);
+		$imgstr = ob_get_contents();
+		ob_end_clean();	
+		echo "--$boundary\r\nContent-Type: image/jpeg\r\nContent-Length: ".strlen($imgstr)."\r\n\r\n".$imgstr;
+		flush();
+		exit;
+	}
+}
+
+function dprint($string){
+	global $debug;
+	if ($debug)
+	{
+echo "\r\n [DEBUG:] ";
+echo $string;
+echo "\r\n";
+}}
+	
+	?>
