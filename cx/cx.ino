@@ -40,7 +40,7 @@ int number_of_reconnects=0;
 const char* ssid = "OpenWrt_G";
 const char* password = "Goedemorgen";
 // Set your Static IP address
-IPAddress local_IP(192, 168, 2, 127+x);
+IPAddress local_IP(192, 168, 2, 224+x);
 // Set your Gateway IP address
 IPAddress gateway(192, 168, 2, 254);
 IPAddress subnet(255, 255, 255, 0);
