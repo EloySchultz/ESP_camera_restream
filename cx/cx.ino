@@ -2,7 +2,7 @@
 #include <WiFi.h>
 #include <ESP32Ping.h> 
 
-int x = 1;  //Camer Cx.
+int x = 4;  //Camer Cx.
 ////
 // WARNING!!! PSRAM IC required for UXGA resolution and high JPEG quality
 //            Ensure ESP32 Wrover Module or other board with PSRAM is selected
@@ -37,8 +37,9 @@ int x = 1;  //Camer Cx.
 int number_of_restarts=0;
 int number_of_reconnects=0;
 // ===========================
-const char* ssid = "OpenWrt_G";
-const char* password = "Goedemorgen";
+
+#include "wifi_credentials.h"
+
 // Set your Static IP address
 IPAddress local_IP(192, 168, 2, 224+x);
 // Set your Gateway IP address

@@ -1,4 +1,6 @@
-We gebruiken esp32 van espressif om te uploaden??
+Simpleweg gebruiken we de esp32 AI thinker CAM van arduino-esp32. 
+
+
 
 Esp32ping library clone from here: https://github.com/marian-craciunescu/ESP32Ping?tab=readme-ov-file
 
